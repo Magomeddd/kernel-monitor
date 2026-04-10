@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KERNEL MONITOR // SYSCALL ANALYZER</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Courier New', monospace;
+            background: #000000;
+            color: #00ff41;
+            padding: 20px;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            border-bottom: 2px solid #00ff41;
+            padding: 15px 20px;
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+            background: rgba(0,0,0,0.85);
+            border-radius: 8px;
+        }
+
+        .logo {
+            font-size: 22px;
+            font-weight: bold;
+            letter-spacing: 2px;
+        }
+
+        .logo .blink {
+            animation: blink 1s step-end infinite;
+        }
+
+        .logo .red { color: #ff0040; }
+
+        @keyframes blink {
+            0%,100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        .status {
+            background: #0a0f0a;
+            border: 1px solid #00ff41;
+            padding: 6px 14px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .status::before {
+            content: "● ";
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%,100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 20px;
+        }
+
+        .analyzer-panel {
+            background: #0a0f0a;
+            border: 1px solid #00ff41;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .terminal-panel {
+            background: #0a0f0a;
+            border: 1px solid #00ff41;
+            border-radius: 8px;
+            overflow: hidden;
+            position: sticky;
+            top: 20px;
+        }
+
+        .terminal-header {
+            background: #000000;
+            padding: 10px 12px;
+            border-bottom: 1px solid #00ff41;
+            font-size: 11px;
+        }
+
+        .terminal-messages {
+            padding: 12px;
+            height: 400px;
+            overflow-y: auto;
+            font-size: 10px;
+            background: #000000;
+        }
+
+        .terminal-line {
+            padding: 4px 0;
+            border-bottom: 1px solid #0a1a0a;
+            display: flex;
+            gap: 8px;
+        }
+
+        .terminal-prompt { color: #00ff41; }
+        .terminal-text { color: #ccc; flex: 1; }
+        .terminal-text.success { color: #00ff41; }
+        .terminal-text.warning { color: #ffaa00; }
+        .terminal-text.error { color: #ff0040; }
+
+        .terminal-input-area {
+            padding: 10px;
+            border-top: 1px solid #00ff41;
+            display: flex;
+            gap: 8px;
+            background: #000000;
+        }
+
+        .terminal-prefix { color: #00ff41; }
+        .terminal-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #00ff41;
+            font-family: monospace;
+            font-size: 10px;
+            outline: none;
+        }
+        .send-cmd {
+            background: #00ff41;
+            border: none;
+            padding: 3px 10px;
+            border-radius: 3px;
+            color: #000;
+            cursor: pointer;
+        }
+
+        .upload-area {
+            background: #000000;
+            border: 2px dashed #00ff41;
+            border-radius: 8px;
+            padding: 35px;
+            text-align: center;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .upload-area:hover {
+            background: #0a1a0a;
+            border-color: #00ff41;
+        }
+        .upload-icon { font-size: 42px; margin-bottom: 10px; }
+        .upload-text { font-size: 13px; margin-bottom: 5px; }
+        .upload-hint { font-size: 9px; color: #1a6a1a; }
+        #fileInput { display: none; }
+
+        .btn {
+            background: #000000;
+            border: 1px solid #00ff41;
+            padding: 8px 16px;
+            border-radius: 4px;
+            color: #00ff41;
+            font-family: monospace;
+            font-size: 11px;
+            cursor: pointer;
+        }
+        .btn:hover {
+            background: #00ff41;
+            color: #000000;
+        }
+        .control-panel {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .section {
+            background: #000000;
+            border: 1px solid #1a4a1a;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+        .section-header {
+            background: #0a1a0a;
+            padding: 8px 12px;
+            border-bottom: 1px solid #1a4a1a;
+            font-size: 11px;
+            color: #00ff41;
+        }
+        .section-content {
+            padding: 10px;
+            font-size: 10px;
+            max-height: 220px;
+            overflow-y: auto;
+        }
+        .log-line {
+            padding: 4px 0;
+            border-bottom: 1px solid #0a1a0a;
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .log-time { color: #1a6a1a; min-width: 55px; }
+        .log-pid { color: #ffaa00; min-width: 65px; }
+        .log-action { color: #00ff41; min-width: 55px; }
+        .log-detail { color: #ccc; flex: 1; word-break: break-word; }
+        .log-detail.highlight { color: #ff0040; }
+        .badge.critical {
+            background: #ff0040;
+            color: #000;
+            padding: 1px 5px;
+            border-radius: 3px;
+            font-size: 8px;
+        }
+
+        .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+        }
+        .summary-card {
+            text-align: center;
+            padding: 6px;
+            background: #0a1a0a;
+            border-radius: 4px;
+        }
+        .summary-number { font-size: 18px; font-weight: bold; color: #00ff41; }
+        .summary-label { font-size: 8px; color: #1a6a1a; }
+
+        .progress-bar {
+            width: 100%;
+            height: 2px;
+            background: #1a1a1a;
+            border-radius: 2px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #00ff41;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .progress-text { text-align: center; font-size: 9px; }
+
+        .tabs {
+            display: flex;
+            gap: 3px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+        .tab {
+            padding: 5px 10px;
+            background: #000000;
+            border: 1px solid #1a4a1a;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 9px;
+            color: #1a6a1a;
+        }
+        .tab.active {
+            background: #0a1a0a;
+            border-color: #00ff41;
+            color: #00ff41;
+        }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        .file-info {
+            background: #0a0f0a;
+            border: 1px solid #1a4a1a;
+            border-radius: 6px;
+            padding: 8px 12px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+        }
+        .arch-diagram {
+            background: #0a0f0a;
+            border: 1px solid #1a4a1a;
+            border-radius: 6px;
+            padding: 12px;
+            margin-top: 20px;
+            font-size: 9px;
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #0a0f0a; }
+        ::-webkit-scrollbar-thumb { background: #00ff41; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <div class="logo">
+            <span>🔓</span> <span class="red">KERNEL</span>.<span class="blink">MONITOR</span>
+        </div>
+        <div class="status">STRACE MODE | ring3</div>
+    </div>
+
+    <div class="main-grid">
+        <div class="analyzer-panel">
+            <div class="upload-area" id="uploadArea">
+                <div class="upload-icon">📁</div>
+                <div class="upload-text">[ drag & drop target ]</div>
+                <div class="upload-hint">upload .exe / .ko / .dll / .sh / .py (max 50MB)</div>
+                <input type="file" id="fileInput">
+            </div>
+
+            <div id="fileInfo" style="display: none;">
+                <div class="file-info">
+                    <span>📄 <span id="fileName"></span> (<span id="fileSize"></span>)</span>
+                    <span>🆔 <span id="fileHash"></span></span>
+                </div>
+            </div>
+
+            <div class="control-panel">
+                <button class="btn" id="analyzeBtn" disabled>[ ▶ ANALYZE ]</button>
+                <button class="btn" id="clearBtn">[ 🗑 CLEAR ]</button>
+                <button class="btn" id="exportBtn">[ 📎 EXPORT ]</button>
+            </div>
+
+            <div id="progressContainer" style="display: none;">
+                <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+                <div class="progress-text" id="progressText">[ INITIALIZING STRACE... ]</div>
+            </div>
+
+            <div id="results" style="display: none;">
+                <div class="section">
+                    <div class="section-header">📊 [ ANALYSIS SUMMARY ]</div>
+                    <div class="section-content" id="summaryContent"></div>
+                </div>
+
+                <div class="tabs">
+                    <div class="tab active" data-tab="logs">[📋 SYSCALLS]</div>
+                    <div class="tab" data-tab="files">[📁 FILES]</div>
+                    <div class="tab" data-tab="network">[🌐 NETWORK]</div>
+                    <div class="tab" data-tab="processes">[⚙️ PROCS]</div>
+                    <div class="tab" data-tab="suspicious">[⚠️ ALERTS]</div>
+                </div>
+
+                <div id="tab-logs" class="tab-content active"><div class="section"><div class="section-content" id="logContent"></div></div></div>
+                <div id="tab-files" class="tab-content"><div class="section"><div class="section-content" id="filesContent"></div></div></div>
+                <div id="tab-network" class="tab-content"><div class="section"><div class="section-content" id="networkContent"></div></div></div>
+                <div id="tab-processes" class="tab-content"><div class="section"><div class="section-content" id="processesContent"></div></div></div>
+                <div id="tab-suspicious" class="tab-content"><div class="section"><div class="section-content" id="suspiciousContent"></div></div></div>
+            </div>
+        </div>
+
+        <div class="terminal-panel">
+            <div class="terminal-header">💀 kmonitor@ring3:~</div>
+            <div class="terminal-messages" id="terminalMessages"></div>
+            <div class="terminal-input-area">
+                <span class="terminal-prefix">λ></span>
+                <input type="text" class="terminal-input" id="terminalInput" placeholder="help, status, clear">
+                <button class="send-cmd" id="sendCmd">⏎</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="arch-diagram">
+        ┌─────────────────────────────────────────────────────────┐<br>
+        │  KERNEL MONITOR ARCHITECTURE (STRACE MODE)             │<br>
+        ├─────────────────────────────────────────────────────────┤<br>
+        │  Browser → Upload → Node.js → strace → syscall log      │<br>
+        │  strace intercepts: open, read, write, connect, execve  │<br>
+        │  Output: JSON report + terminal visualization           │<br>
+        └─────────────────────────────────────────────────────────┘
+    </div>
+</div>
+
+<script>
+    let currentFile = null;
+    let analysisData = { logs: [], summary: {} };
+
+    const terminalMessages = document.getElementById('terminalMessages');
+    const terminalInput = document.getElementById('terminalInput');
+    const sendCmd = document.getElementById('sendCmd');
+
+    function addTerminalLine(text, type = 'normal') {
+        const line = document.createElement('div');
+        line.className = 'terminal-line';
+        let colorClass = '';
+        if (type === 'success') colorClass = 'success';
+        else if (type === 'error') colorClass = 'error';
+        else if (type === 'warning') colorClass = 'warning';
+        line.innerHTML = `<span class="terminal-prompt">λ></span><span class="terminal-text ${colorClass}">${text}</span>`;
+        terminalMessages.appendChild(line);
+        terminalMessages.scrollTop = terminalMessages.scrollHeight;
+    }
+
+    function handleTerminalCommand(cmd) {
+        const c = cmd.toLowerCase().trim();
+        if (c === 'help') {
+            addTerminalLine('[>] Commands: status, clear, logs', 'success');
+        } else if (c === 'status') {
+            addTerminalLine('[+] strace mode: ACTIVE', 'success');
+            addTerminalLine('[+] syscall interception: ENABLED', 'success');
+            if (analysisData.summary?.pid) addTerminalLine(`[+] Last target PID: ${analysisData.summary.pid}`, 'normal');
+        } else if (c === 'clear') {
+            terminalMessages.innerHTML = '';
+            addTerminalLine('[+] Terminal cleared', 'success');
+        } else if (c === 'logs' && analysisData.logs?.length > 0) {
+            analysisData.logs.slice(-5).forEach(log => {
+                addTerminalLine(`[${log.time}] [PID ${log.pid}] ${log.action} ${log.detail}`, 'normal');
+            });
+        } else if (c !== '') {
+            addTerminalLine(`Unknown: ${cmd}`, 'error');
+        }
+    }
+
+    sendCmd.addEventListener('click', () => {
+        const cmd = terminalInput.value.trim();
+        if (cmd) { addTerminalLine(cmd, 'normal'); handleTerminalCommand(cmd); terminalInput.value = ''; }
+    });
+    terminalInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            const cmd = terminalInput.value.trim();
+            if (cmd) { addTerminalLine(cmd, 'normal'); handleTerminalCommand(cmd); terminalInput.value = ''; }
+        }
+    });
+
+    const uploadArea = document.getElementById('uploadArea');
+    const fileInput = document.getElementById('fileInput');
+    const analyzeBtn = document.getElementById('analyzeBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const exportBtn = document.getElementById('exportBtn');
+    const fileInfo = document.getElementById('fileInfo');
+    const fileNameSpan = document.getElementById('fileName');
+    const fileSizeSpan = document.getElementById('fileSize');
+    const fileHashSpan = document.getElementById('fileHash');
+    const results = document.getElementById('results');
+    const progressContainer = document.getElementById('progressContainer');
+    const progressFill = document.getElementById('progressFill');
+    const progressText = document.getElementById('progressText');
+
+    uploadArea.addEventListener('click', () => fileInput.click());
+    uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
+    uploadArea.addEventListener('dragleave', () => { uploadArea.classList.remove('drag-over'); });
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('drag-over');
+        if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+    function handleFile(file) {
+        currentFile = file;
+        fileNameSpan.textContent = file.name;
+        fileSizeSpan.textContent = formatFileSize(file.size);
+        fileHashSpan.textContent = generateSimpleHash(file.name + file.size);
+        fileInfo.style.display = 'block';
+        analyzeBtn.disabled = false;
+        results.style.display = 'none';
+        addTerminalLine(`[>] File received: ${file.name} (${formatFileSize(file.size)})`, 'success');
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(2) + ' KB';
+        return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+    }
+
+    function generateSimpleHash(str) {
+        let hash = 0;
+        for (let i = 0; i < str.length; i++) { hash = ((hash << 5) - hash) + str.charCodeAt(i); hash |= 0; }
+        return Math.abs(hash).toString(16).substring(0, 8);
+    }
+
+    analyzeBtn.addEventListener('click', async () => {
+        if (!currentFile) return;
+
+        analyzeBtn.disabled = true;
+        progressContainer.style.display = 'block';
+        results.style.display = 'none';
+        progressFill.style.width = '0%';
+
+        addTerminalLine('[!] INITIATING STRACE ANALYSIS', 'warning');
+        addTerminalLine('[>] Spawning sandbox...', 'normal');
+
+        let progress = 0;
+        const progressInterval = setInterval(() => {
+            progress += 10;
+            progressFill.style.width = progress + '%';
+            if (progress >= 100) clearInterval(progressInterval);
+        }, 300);
+
+        const formData = new FormData();
+        formData.append('file', currentFile);
+
+        try {
+            const response = await fetch('/analyze', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+
+            clearInterval(progressInterval);
+            progressFill.style.width = '100%';
+            
+            analysisData = data;
+            displayResults(data);
+
+            progressContainer.style.display = 'none';
+            analyzeBtn.disabled = false;
+
+            addTerminalLine('[✓] ANALYSIS COMPLETE', 'success');
+            addTerminalLine(`[+] Syscalls intercepted: ${data.summary.total_calls}`, 'success');
+            addTerminalLine(`[+] Suspicious events: ${data.summary.suspicious}`, data.summary.suspicious > 0 ? 'warning' : 'success');
+            
+            if (data.summary.suspicious > 0) {
+                addTerminalLine('[!] WARNING: Suspicious behavior detected', 'error');
+            }
+        } catch (err) {
+            clearInterval(progressInterval);
+            progressContainer.style.display = 'none';
+            analyzeBtn.disabled = false;
+            addTerminalLine(`[-] ERROR: ${err.message}`, 'error');
+        }
+    });
+
+    function displayResults(data) {
+        const summary = data.summary;
+        const logs = data.logs;
+        const riskColor = summary.suspicious > 2 ? '#ff0040' : (summary.suspicious > 0 ? '#ffaa00' : '#00ff41');
+
+        document.getElementById('summaryContent').innerHTML = `
+            <div class="summary-grid">
+                <div class="summary-card"><div class="summary-number">${summary.total_calls}</div><div class="summary-label">SYSCALLS</div></div>
+                <div class="summary-card"><div class="summary-number">${summary.file_ops}</div><div class="summary-label">FILE OPS</div></div>
+                <div class="summary-card"><div class="summary-number">${summary.network_ops}</div><div class="summary-label">NET CONN</div></div>
+                <div class="summary-card"><div class="summary-number">${summary.process_ops}</div><div class="summary-label">PROCESSES</div></div>
+                <div class="summary-card"><div class="summary-number" style="color:${riskColor}">${summary.suspicious}</div><div class="summary-label">ALERTS</div></div>
+            </div>
+            <div style="margin-top: 8px; padding-top: 6px; border-top: 1px solid #1a4a1a; display: flex; justify-content: space-between; font-size: 8px;">
+                <span>FILE: ${summary.filename}</span>
+                <span>SIZE: ${formatFileSize(summary.filesize)}</span>
+                <span>HASH: ${summary.hash}</span>
+            </div>`;
+
+        document.getElementById('logContent').innerHTML = logs.map(log => `
+            <div class="log-line">
+                <div class="log-time">[${log.time}]</div>
+                <div class="log-pid">[${log.pid}]</div>
+                <div class="log-action">${log.action}</div>
+                <div class="log-detail ${log.suspicious ? 'highlight' : ''}">${log.detail}</div>
+                ${log.suspicious ? '<span class="badge critical">!</span>' : ''}
+            </div>
+        `).join() || '<div style="color:#1a6a1a">[no data]</div>';
+
+        document.getElementById('filesContent').innerHTML = logs.filter(l => ['OPEN','READ','WRITE'].includes(l.action)).map(log => `
+            <div class="log-line"><div class="log-time">[${log.time}]</div><div class="log-pid">[${log.pid}]</div><div class="log-action">${log.action}</div><div class="log-detail ${log.suspicious ? 'highlight' : ''}">${log.detail}</div></div>
+        `).join() || '<div style="color:#1a6a1a">[no data]</div>';
+
+        document.getElementById('networkContent').innerHTML = logs.filter(l => l.action === 'CONNECT').map(log => `
+            <div class="log-line"><div class="log-time">[${log.time}]</div><div class="log-pid">[${log.pid}]</div><div class="log-action">🌐 CONNECT</div><div class="log-detail ${log.suspicious ? 'highlight' : ''}">${log.detail}</div></div>
+        `).join() || '<div style="color:#1a6a1a">[no network activity]</div>';
+
+        document.getElementById('processesContent').innerHTML = logs.filter(l => ['FORK','EXEC'].includes(l.action)).map(log => `
+            <div class="log-line"><div class="log-time">[${log.time}]</div><div class="log-pid">[${log.pid}]</div><div class="log-action">${log.action}</div><div class="log-detail">${log.detail}</div></div>
+        `).join() || '<div style="color:#1a6a1a">[no process operations]</div>';
+
+        document.getElementById('suspiciousContent').innerHTML = logs.filter(l => l.suspicious).map(log => `
+            <div class="log-line"><div class="log-time">[${log.time}]</div><div class="log-pid">[${log.pid}]</div><div class="log-action">⚠️ ${log.action}</div><div class="log-detail highlight">${log.detail}</div><span class="badge critical">ALERT</span></div>
+        `).join() || '<div style="color:#00ff41">[✓] no suspicious activity detected</div>';
+
+        results.style.display = 'block';
+    }
+
+    clearBtn.addEventListener('click', () => {
+        results.style.display = 'none';
+        analysisData = { logs: [], summary: {} };
+        fileInfo.style.display = 'none';
+        currentFile = null;
+        analyzeBtn.disabled = true;
+        fileInput.value = '';
+        addTerminalLine('[>] Report cleared', 'success');
+    });
+
+    exportBtn.addEventListener('click', () => {
+        const exportData = {
+            filename: currentFile?.name || 'unknown',
+            timestamp: new Date().toISOString(),
+            summary: analysisData.summary,
+            syscalls: analysisData.logs
+        };
+        const blob = new Blob([JSON.stringify(exportData, null, 2)], {type: 'application/json'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `kernel_analysis_${Date.now()}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+        addTerminalLine('[+] JSON exported', 'success');
+    });
+
+    document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            const tabId = tab.dataset.tab;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById(`tab-${tabId}`).classList.add('active');
+        });
+    });
+
+    addTerminalLine('[✓] System ready. Upload target binary.', 'success');
+    addTerminalLine('[>] Type "help" for commands', 'normal');
+</script>
+</body>
+</html>
